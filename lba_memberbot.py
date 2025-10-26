@@ -48,9 +48,8 @@ async def members(interaction: discord.Interaction):
         return
 
     guild = interaction.guild
-    total_members = guild.member_count
 
-    # 権限チェック（管理者またはR4のみ実行可）
+    # 実行権限チェック（管理者またはR4）
     allowed = interaction.user.guild_permissions.administrator
     role_names = [r.name for r in interaction.user.roles]
     if "R4" in role_names:
@@ -62,22 +61,28 @@ async def members(interaction: discord.Interaction):
         )
         return
 
+    # --- BOTとBOTロール除外 ---
+    bot_roles = [r for r in guild.roles if r.managed]  # 管理対象ロール（Botロール）
+    bot_role_ids = [r.id for r in bot_roles]
+
+    members = [
+        m for m in guild.members
+        if not m.bot and not any(r.id in bot_role_ids for r in m.roles)
+    ]
+
     # --- ソート設定 ---
-    priority_roles = ["サーバ管理者", "R4", "R3"]
+    priority_roles = ["サーバ管理者", "R4", "R3", "ゲスト"]
 
     sorted_members = []
     other_members = []
 
-    for member in guild.members:
-        if member.bot:
-            continue  # BOTは除外
-
+    for member in members:
         # 管理者権限最優先
         if member.guild_permissions.administrator:
             sorted_members.append(("サーバ管理者", member.display_name))
         else:
             role_found = False
-            for role in priority_roles[1:]:  # 「R4」「R3」
+            for role in priority_roles[1:]:  # R4, R3, ゲスト
                 if discord.utils.get(member.roles, name=role):
                     sorted_members.append((role, member.display_name))
                     role_found = True
@@ -85,10 +90,12 @@ async def members(interaction: discord.Interaction):
             if not role_found:
                 other_members.append(("一般", member.display_name))
 
-    # --- カテゴリごとにグループ化 ---
+    # --- グループ化 ---
     grouped = {}
     for role_name, name in sorted_members + other_members:
         grouped.setdefault(role_name, []).append(name)
+
+    total_members = len(members)  # BOT除外後の実人数
 
     # --- 出力整形 ---
     result_text = f"👥 **サーバーメンバー一覧（合計 {total_members} 名）**\n\n"
