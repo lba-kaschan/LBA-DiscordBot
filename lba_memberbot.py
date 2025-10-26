@@ -16,7 +16,7 @@ def run_web():
 
 # --- Discord設定 ---
 TOKEN = os.getenv("TOKEN")
-ALLOWED_CHANNEL_ID = 1431929455554592879  # あなたの指定チャンネルID
+ALLOWED_CHANNEL_ID = 1431929455554592879  # コマンドを許可するチャンネルID
 
 intents = discord.Intents.default()
 intents.members = True
@@ -39,6 +39,7 @@ async def on_ready():
 # --- /members コマンド ---
 @client.tree.command(name="members", description="サーバーのメンバー一覧を表示します（R4限定）")
 async def members(interaction: discord.Interaction):
+    # チャンネル制限
     if interaction.channel.id != ALLOWED_CHANNEL_ID:
         await interaction.response.send_message(
             "❌ このコマンドは指定チャンネルでのみ使用できます。",
@@ -46,7 +47,10 @@ async def members(interaction: discord.Interaction):
         )
         return
 
-    # R4 or 管理者のみ許可
+    guild = interaction.guild
+    total_members = guild.member_count
+
+    # 権限チェック（管理者またはR4のみ実行可）
     allowed = interaction.user.guild_permissions.administrator
     role_names = [r.name for r in interaction.user.roles]
     if "R4" in role_names:
@@ -58,21 +62,48 @@ async def members(interaction: discord.Interaction):
         )
         return
 
-    # メンバー一覧取得
-    members = [m for m in interaction.guild.members if not m.bot]
-    lines = ["**🗂 メンバー一覧**"]
-    for m in members:
-        roles = ", ".join([r.name for r in m.roles if r.name != "@everyone"])
-        lines.append(f"- {m.display_name}（{roles or 'ロールなし'}）")
+    # --- ソート設定 ---
+    priority_roles = ["サーバ管理者", "R4", "R3"]
 
-    output = "\n".join(lines)
-    if len(output) > 1900:
-        parts = [output[i:i+1900] for i in range(0, len(output), 1900)]
+    sorted_members = []
+    other_members = []
+
+    for member in guild.members:
+        if member.bot:
+            continue  # BOTは除外
+
+        # 管理者権限最優先
+        if member.guild_permissions.administrator:
+            sorted_members.append(("サーバ管理者", member.display_name))
+        else:
+            role_found = False
+            for role in priority_roles[1:]:  # 「R4」「R3」
+                if discord.utils.get(member.roles, name=role):
+                    sorted_members.append((role, member.display_name))
+                    role_found = True
+                    break
+            if not role_found:
+                other_members.append(("一般", member.display_name))
+
+    # --- カテゴリごとにグループ化 ---
+    grouped = {}
+    for role_name, name in sorted_members + other_members:
+        grouped.setdefault(role_name, []).append(name)
+
+    # --- 出力整形 ---
+    result_text = f"👥 **サーバーメンバー一覧（合計 {total_members} 名）**\n\n"
+    for role in priority_roles + ["一般"]:
+        if role in grouped:
+            result_text += f"**{role}（{len(grouped[role])}名）**\n" + "\n".join(grouped[role]) + "\n\n"
+
+    # --- メッセージ送信 ---
+    if len(result_text) > 1900:
+        parts = [result_text[i:i+1900] for i in range(0, len(result_text), 1900)]
         await interaction.response.send_message(parts[0])
         for p in parts[1:]:
             await interaction.followup.send(p)
     else:
-        await interaction.response.send_message(output)
+        await interaction.response.send_message(result_text)
 
 # --- Flaskを別スレッドで起動（Render監視回避） ---
 threading.Thread(target=run_web).start()
